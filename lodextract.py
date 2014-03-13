@@ -3,7 +3,9 @@
 import zlib
 import struct
 import os
-from PIL import Image
+from PIL import Image, ImageDraw
+
+from common import crc24_func, get_complement, font
 
 def is_pcx(data):
     size,width,height = struct.unpack("<III",data[:12])
@@ -25,7 +27,7 @@ def read_pcx(data):
     else:
         return None
 
-def unpack_lod(infile,outdir):
+def unpack_lod(infile,outdir,shred=True):
     f = open(infile)
 
     if f.read(4) != 'LOD\0':
@@ -54,6 +56,16 @@ def unpack_lod(infile,outdir):
         if is_pcx(data):
             im = read_pcx(data)
             if im:
+                if shred:
+                    crc = crc24_func(filename)
+                    r = crc>>16
+                    g = (crc&0xff00)>>8
+                    b = crc&0xff
+                    w,h = im.size
+                    im = Image.new("RGB", (w*3,h*3), (r,g,b))
+                    draw = ImageDraw.Draw(im)
+                    draw.text((0,0),os.path.basename(filename),get_complement(r,g,b),font=font)
+                    im = im.resize((w,h),Image.ANTIALIAS)
                 im.save(filename, "PNG")
             else:
                 return False
