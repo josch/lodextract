@@ -4,18 +4,18 @@
 # vcmi/client/CAnimation.cpp
 
 import struct
-from PIL import Image
+from PIL import Image, ImageDraw
 from collections import defaultdict
 import os
+from common import crc24_func, font, sanitize_filename
 
-def sanitize_filename(fname):
-    # find the first character outside range [32-126]
-    for i,c in enumerate(fname):
-        if ord(c) < 32 or ord(c) > 126:
-            break
-    return fname[:i]
+def get_color(fname):
+    crc = crc24_func(fname)
+    # values 0-7 must not be used as they might represent transparency
+    # so we are left with 248 values 
+    return 8+crc%248
 
-def extract_def(infile,outdir):
+def extract_def(infile,outdir,shred=True):
     f = open(infile)
     bn = os.path.basename(infile)
     bn = os.path.splitext(bn)[0]
@@ -135,6 +135,18 @@ def extract_def(infile,outdir):
                     h = 1
                 # TODO: encode this information correctly and dont create a fake 1px image
                 im = Image.new('P', (w,h))
+            if shred:
+                #im = Image.new("P", (w*3,h*3), get_color(bn))
+                #draw = ImageDraw.Draw(im)
+                #tw,th = draw.textsize("%d%s"%(j,bn),font=font)
+                #draw.text(((w*3-tw)/2,(h*3-th)/2),"%d%s"%(j,bn),font=font)
+                #im = im.resize((w,h),Image.ANTIALIAS)
+                pixels = im.load()
+                color = get_color(bn)
+                for i in range(w):
+                    for j in range(h):
+                        if pixels[i,j] > 7:
+                            pixels[i,j] = color
             im.putpalette(palette)
             im.save(outname)
     return True

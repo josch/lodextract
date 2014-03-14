@@ -3,7 +3,14 @@ import colorsys
 
 from PIL import ImageFont
 
-font = ImageFont.truetype("/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf", 24)
+font = ImageFont.truetype("/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf", 34)
+
+def sanitize_filename(fname):
+    # find the first character outside range [32-126]
+    for i,c in enumerate(fname):
+        if ord(c) < 32 or ord(c) > 126:
+            break
+    return fname[:i]
 
 def get_complement(r,g,b):
     r = r/255.0
