@@ -30,8 +30,9 @@ def read_pcx(data):
 def unpack_lod(infile,outdir,shred=True):
     f = open(infile)
 
-    if f.read(4) != 'LOD\0':
-        print "not LOD file"
+    header = f.read(4)
+    if header != 'LOD\0':
+        print "not LOD file: %s"%header
         return False
 
     f.seek(8)
@@ -41,7 +42,7 @@ def unpack_lod(infile,outdir,shred=True):
     files=[]
     for i in range(total):
         filename, = struct.unpack("16s", f.read(16))
-        filename = filename[:filename.index('\0')]
+        filename = filename[:filename.index('\0')].lower()
         offset,size,_,csize = struct.unpack("<IIII", f.read(16))
         files.append((filename,offset,size,csize))
 
@@ -62,9 +63,23 @@ def unpack_lod(infile,outdir,shred=True):
                     g = (crc&0xff00)>>8
                     b = crc&0xff
                     w,h = im.size
-                    im = Image.new("RGB", (w*3,h*3), (r,g,b))
+                    pixels = im.load()
+                    for i in range(w):
+                        for j in range(h):
+                            if pixels[i,j] > 7:
+                                if im.mode == 'P':
+                                    pixels[i,j] = 8+crc%248
+                                else:
+                                    pixels[i,j] = (r,g,b)
+                    im.resize((w*3,h*3))
                     draw = ImageDraw.Draw(im)
-                    draw.text((0,0),os.path.basename(filename),get_complement(r,g,b),font=font)
+                    tw,th = draw.textsize(os.path.basename(filename),font=font)
+                    tpos = ((w*3-tw)/2,(h*3-th)/2)
+                    if im.mode == 'P':
+                        # we can't really have a complement in palette mode, so just get some color
+                        draw.text(tpos,os.path.basename(filename),255,font=font)
+                    else:
+                        draw.text(tpos,os.path.basename(filename),get_complement(r,g,b),font=font)
                     im = im.resize((w,h),Image.ANTIALIAS)
                 im.save(filename, "PNG")
             else:
@@ -82,9 +97,10 @@ if __name__ == '__main__':
         print "usage: %s infile.lod ./outdir"%sys.argv[0]
         print ""
         print "usually after installing the normal way:"
-        print "    %s .vcmi/Data/H3bitmap.lod .vcmi/Mods/vcmi/Data/"
+        print "    %s .vcmi/Data/H3bitmap.lod .vcmi/Mods/vcmi/Data/"%sys.argv[0]
         print "    rm .vcmi/Data/H3bitmap.lod"
-        print "    %s .vcmi/Data/H3sprite.lod .vcmi/Mods/vcmi/Data/"
+        print "    %s .vcmi/Data/H3sprite.lod .vcmi/Mods/vcmi/Data/"%sys.argv[0]
         print "    rm .vcmi/Data/H3sprite.lod"
+        exit(1)
     ret = unpack_lod(sys.argv[1], sys.argv[2])
     exit(0 if ret else 1)

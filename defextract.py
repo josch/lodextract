@@ -18,7 +18,7 @@ def get_color(fname):
 def extract_def(infile,outdir,shred=True):
     f = open(infile)
     bn = os.path.basename(infile)
-    bn = os.path.splitext(bn)[0]
+    bn = os.path.splitext(bn)[0].lower()
 
     # t - type
     # blocks - # of blocks
@@ -67,7 +67,7 @@ def extract_def(infile,outdir,shred=True):
             # lm,tm - left and top margin
             _,fmt,fw,fh,w,h,lm,tm = struct.unpack("<IIIIIIii", f.read(32))
             n = os.path.splitext(n)[0]
-            outname = "%s"%outdir+os.sep+"%02d_%s_%02d_%02d_%s_%dx%d_%dx%d.png"%(t,bn,bid,j,n,fw,fh,lm,tm)
+            outname = "%s"%outdir+os.sep+"%02d_%s_%02d_%02d_%s_%dx%d_%dx%d_%d.png"%(t,bn,bid,j,n,fw,fh,lm,tm,fmt)
             print "writing to %s"%outname
 
             if w != 0 and h != 0:
@@ -100,8 +100,8 @@ def extract_def(infile,outdir,shred=True):
                         totalrowlength=0
                         while totalrowlength<w:
                             segment, = struct.unpack("<B", f.read(1))
-                            code = segment/32
-                            length = (segment&31)+1
+                            code = segment>>5
+                            length = (segment&0x1f)+1
                             if code == 7: # raw data
                                 pixeldata += f.read(length)
                             else: # rle
@@ -113,12 +113,14 @@ def extract_def(infile,outdir,shred=True):
                     lineoffs = [struct.unpack("<"+"H"*(w/32), f.read(w/16))[0] for i in range(h)]
 
                     for lineoff in lineoffs:
-                        f.seek(offs+32+lineoff)
+                        if f.tell() != offs+32+lineoff:
+                            print "unexpected offset: %d, expected %d"%(f.tell(),offs+32+lineoff)
+                            f.seek(offs+32+lineoff)
                         totalrowlength=0
                         while totalrowlength<w:
                             segment, = struct.unpack("<B", f.read(1))
-                            code = segment/32
-                            length = (segment&31)+1
+                            code = segment>>5
+                            length = (segment&0x1f)+1
                             if code == 7: # raw data
                                 pixeldata += f.read(length)
                             else: # rle
