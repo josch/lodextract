@@ -67,7 +67,7 @@ def extract_def(infile,outdir,shred=True):
             # lm,tm - left and top margin
             _,fmt,fw,fh,w,h,lm,tm = struct.unpack("<IIIIIIii", f.read(32))
             n = os.path.splitext(n)[0]
-            outname = "%s"%outdir+os.sep+"%02d_%s_%02d_%02d_%s_%dx%d_%dx%d_%d.png"%(t,bn,bid,j,n,fw,fh,lm,tm,fmt)
+            outname = "%s"%outdir+os.sep+"%02d_%s_%02d_%02d_%s_%d.png"%(t,bn,bid,j,n,fmt)
             print "writing to %s"%outname
 
             if w != 0 and h != 0:
@@ -143,14 +143,26 @@ def extract_def(infile,outdir,shred=True):
                 #tw,th = draw.textsize("%d%s"%(j,bn),font=font)
                 #draw.text(((w*3-tw)/2,(h*3-th)/2),"%d%s"%(j,bn),font=font)
                 #im = im.resize((w,h),Image.ANTIALIAS)
-                pixels = im.load()
+
+                #pixels = im.load()
+                #color = get_color(bn)
+                #for i in range(w):
+                #    for j in range(h):
+                #        if pixels[i,j] > 7:
+                #            pixels[i,j] = color
+
                 color = get_color(bn)
-                for i in range(w):
-                    for j in range(h):
-                        if pixels[i,j] > 7:
-                            pixels[i,j] = color
-            im.putpalette(palette)
-            im.save(outname)
+                import numpy as np
+                pixels = np.array(im)
+                pixels[pixels > 7] = color
+                im = Image.fromarray(pixels)
+            imo = Image.new('P', (fw,fh))
+            imo.putpalette(palette)
+            imo.paste(im,(lm,tm))
+            #draw = ImageDraw.Draw(imo)
+            #tw,th = draw.textsize(bn,font=font)
+            #draw.text(((fw-tw)/2,(fh-th)/2),bn,255,font=font)
+            imo.save(outname)
     return True
 
 if __name__ == '__main__':

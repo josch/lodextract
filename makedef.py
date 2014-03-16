@@ -117,13 +117,24 @@ def makedef(indir, outdir):
     sig = None
     # sanity checks and fill infiles dict
     for f in os.listdir(indir):
-        m = re.match('(\d+)_([a-z0-9_]+)_(\d\d)_(\d\d)_([A-Za-z0-9_]+)_(\d+)x(\d+)_(\d+)x(\d+)_([0-3]).png', f)
+        m = re.match('(\d+)_([a-z0-9_]+)_(\d+)_(\d+)_([A-Za-z0-9_]+)_([0-3]).png', f)
         if not m:
             continue
-        t,p,bid,j,fn,fw,fh,lm,tm,fmt = m.groups()
-        t,bid,j,fw,fh,lm,tm,fmt = int(t),int(bid),int(j),int(fw),int(fh),int(lm),int(tm),int(fmt)
+        t,p,bid,j,fn,fmt = m.groups()
+        t,bid,j,fmt = int(t),int(bid),int(j),int(fmt)
         im = Image.open(os.sep.join([indir,f]))
-        w,h = im.size
+        fw,fh = im.size
+        lm,tm,rm,bm = im.getbbox() or (0,0,0,0)
+        # format 3 has to have width and lm divisible by 32
+        if fmt == 3 and lm%32 != 0:
+            # shrink lm to the previous multiple of 32
+            lm = (lm/32)*32
+        w,h = rm-lm,bm-tm
+        if fmt == 3 and w%32 != 0:
+            # grow rm to the next multiple of 32
+            w = (((w-1)>>5)+1)<<5
+            rm = lm+w
+        im = im.crop((lm,tm,rm,bm))
         if im.mode != 'P':
             print "input images must have a palette"
             return False
@@ -146,9 +157,6 @@ def makedef(indir, outdir):
         elif fmt == 2:
             data = encode3(im)
         elif fmt == 3:
-            if w < 16:
-                print "width must not be less than 16 for format 3"
-                return False
             data = encode3(im)
         else:
             print "unknown format: %d"%fmt
@@ -214,12 +222,15 @@ def makedef(indir, outdir):
             # format
             # full width and full height
             # width and height
-            # left and top margin 
-            outf.write(struct.pack("<IIIIIIii",w*h,fmt,fw,fh,w,h,lm,tm))
+            # left and top margin
             if fmt == 0:
+                s = len(data)
+                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
                 buf = ''.join([chr(i) for i in list(im.getdata())])
                 outf.write(buf)
             elif fmt == 1:
+                s = 4*h+sum(len(d) for d in data)
+                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
                 lineoffs = []
                 acc = 4*h
                 for d in data:
@@ -229,6 +240,8 @@ def makedef(indir, outdir):
                 for i in data:
                     outf.write(i)
             elif fmt == 2:
+                s = 2+sum(len(d) for d in data)
+                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
                 offs = outf.tell()-32+2
                 if offs > ushrtmax: 
                     print "exceeding max ushort value: %d"%offs
@@ -237,6 +250,8 @@ def makedef(indir, outdir):
                 for i in data:
                     outf.write(i)
             elif fmt == 3:
+                s = (w/16)*h+sum(len(d) for d in data)
+                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
                 # store the same value in all w/16 blocks per line
                 lineoffs = []
                 acc = 0
