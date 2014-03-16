@@ -7,6 +7,7 @@ import struct
 from PIL import Image, ImageDraw
 from collections import defaultdict
 import os
+import json
 from common import crc24_func, font, sanitize_filename
 
 def get_color(fname):
@@ -31,7 +32,6 @@ def extract_def(infile,outdir,shred=True):
         palette.extend((r,g,b))
 
     offsets = defaultdict(list)
-    k = 0 # for naming bogus filename entries
     for i in range(blocks):
         # bid - block id
         # entries - number of images in this block
@@ -41,23 +41,18 @@ def extract_def(infile,outdir,shred=True):
         # a list of 13 character long filenames
         for j in range(entries):
             name, = struct.unpack("13s", f.read(13))
-            name = sanitize_filename(name)
-            # if nothing remains, create bogus name
-            if len(name) == 0:
-                num = "%02d"%k
-                if len(bn)+len(num) > 9: # truncate name
-                    name = bn[:9-len(num)]+num
-                else:
-                    name = bn+num
-            k+=1
-            names.append(name)
         # a list of offsets
-        for n in names:
+        for j in range(entries):
             offs, = struct.unpack("<I", f.read(4))
-            offsets[bid].append((n,offs))
+            offsets[bid].append(offs)
+
+    os.mkdir(os.path.join(outdir,"%s.dir"%bn))
+
+    out_json = {"sequences":[],"type":t,"format":-1}
 
     for bid,l in offsets.items():
-        for j,(n,offs) in enumerate(l):
+        frames=[]
+        for j,offs in enumerate(l):
             f.seek(offs)
             pixeldata = ""
             # first entry is the size which is unused
@@ -66,9 +61,16 @@ def extract_def(infile,outdir,shred=True):
             # w,h - width and height, w must be a multiple of 16
             # lm,tm - left and top margin
             _,fmt,fw,fh,w,h,lm,tm = struct.unpack("<IIIIIIii", f.read(32))
-            n = os.path.splitext(n)[0]
-            outname = "%s"%outdir+os.sep+"%02d_%s_%02d_%02d_%s_%d.png"%(t,bn,bid,j,n,fmt)
+            outname = os.path.join(outdir,"%s.dir"%bn,"%02d_%02d.png"%(bid,j))
             print "writing to %s"%outname
+
+            if out_json["format"] == -1:
+                out_json["format"] = fmt
+            elif out_json["format"] != fmt:
+                print "format %d of this frame does not match of last frame %d"%(fmt,global_fmt)
+                return False
+
+            frames.append(os.path.join("%s.dir"%bn,"%02d_%02d.png"%(bid,j)))
 
             if w != 0 and h != 0:
                 if fmt == 0:
@@ -135,13 +137,8 @@ def extract_def(infile,outdir,shred=True):
                     return False
                 im = Image.fromstring('P', (w,h),pixeldata)
             else: # either width or height is zero
-                if w == 0:
-                    w = 1
-                if h == 0:
-                    h = 1
-                # TODO: encode this information correctly and dont create a fake 1px image
-                im = Image.new('P', (w,h))
-            if shred:
+                im = None
+            if im and shred:
                 #im = Image.new("P", (w*3,h*3), get_color(bn))
                 #draw = ImageDraw.Draw(im)
                 #tw,th = draw.textsize("%d%s"%(j,bn),font=font)
@@ -162,11 +159,15 @@ def extract_def(infile,outdir,shred=True):
                 im = Image.fromarray(pixels)
             imo = Image.new('P', (fw,fh))
             imo.putpalette(palette)
-            imo.paste(im,(lm,tm))
+            if im:
+                imo.paste(im,(lm,tm))
             #draw = ImageDraw.Draw(imo)
             #tw,th = draw.textsize(bn,font=font)
             #draw.text(((fw-tw)/2,(fh-th)/2),bn,255,font=font)
             imo.save(outname)
+        out_json["sequences"].append({"group":bid,"frames":frames})
+        with open(os.path.join(outdir,"%s.json"%bn),"w+") as o:
+            json.dump(out_json,o,indent=4)
     return True
 
 if __name__ == '__main__':

@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 
 import os
-import re
 import struct
+import json
 from collections import defaultdict
 from PIL import Image
 ushrtmax = (1<<16)-1
 
 def encode0(im):
-    return ''.join([chr(i) for i in list(im.getdata())])
+    data = ''.join([chr(i) for i in list(im.getdata())])
+    size = len(data)
+    return data,size
 
 # greedy RLE
 # for each pixel, test which encoding manages to encode most data, then apply
@@ -16,7 +18,7 @@ def encode0(im):
 def encode1(im):
     pixels = im.load()
     w,h = im.size
-    result = []
+    data = []
     # these function return a tuple of the compressed string and the amount of
     # pixels compressed
     def rle_comp(x,y):
@@ -56,8 +58,10 @@ def encode1(im):
             else:
                 r += rawc
                 x += rawl
-        result.append(r)
-    return result
+        data.append(r)
+    # 4*height bytes for lineoffsets
+    size = 4*h+sum([len(d) for d in data])
+    return data,size
 
 def encode23chunk(s,e,pixels,y):
     r = ''
@@ -115,79 +119,83 @@ def encode23chunk(s,e,pixels,y):
 def encode2(im):
     pixels = im.load()
     w,h = im.size
-    result = []
+    data = []
     for y in range(h):
-        result.append(encode23chunk(0,w,pixels,y))
-    return result
+        data.append(encode23chunk(0,w,pixels,y))
+    # 2*height bytes for lineoffsets plus two unknown bytes
+    size = 2*h+2+sum(len(d) for d in data)
+    return data,size
 
 # this is like encode2 but limited to only encoding blocks of 32 pixels at a time
 def encode3(im):
     pixels = im.load()
     w,h = im.size
-    result = []
+    data = []
     for y in range(h):
         res = []
         # encode each row in 32 pixel blocks
         for i in range(w/32):
             res.append(encode23chunk(i*32, (i+1)*32, pixels, y))
-        result.append(res)
-    return result
+        data.append(res)
+    # width/16 bytes per line as offset header
+    size = (w/16)*h+sum(sum([len(e) for e in d]) for d in data)
+    return data,size
 
 fmtencoders = [encode0,encode1,encode2,encode3]
 
-def makedef(indir, outdir):
+def makedef(infile, outdir):
     infiles = defaultdict(list)
     sig = None
+
+    with open(infile) as f:
+        in_json = json.load(f)
+
+    t = in_json["type"]
+    fmt = in_json["format"]
+    p = os.path.basename(infile)
+    p = os.path.splitext(p)[0].lower()
+    d = os.path.dirname(infile)
+
     # sanity checks and fill infiles dict
-    for f in os.listdir(indir):
-        m = re.match('(\d+)_([a-z0-9_]+)_(\d+)_(\d+)_([A-Za-z0-9_]+)_([0-3]).png', f)
-        if not m:
-            continue
-        t,p,bid,j,fn,fmt = m.groups()
-        t,bid,j,fmt = int(t),int(bid),int(j),int(fmt)
-        im = Image.open(os.sep.join([indir,f]))
-        fw,fh = im.size
-        lm,tm,rm,bm = im.getbbox() or (0,0,0,0)
-        # format 3 has to have width and lm divisible by 32
-        if fmt == 3 and lm%32 != 0:
-            # shrink lm to the previous multiple of 32
-            lm = (lm/32)*32
-        w,h = rm-lm,bm-tm
-        if fmt == 3 and w%32 != 0:
-            # grow rm to the next multiple of 32
-            w = (((w-1)>>5)+1)<<5
-            rm = lm+w
-        im = im.crop((lm,tm,rm,bm))
-        if im.mode != 'P':
-            print "input images must have a palette"
-            return False
-        cursig =(t,p,fw,fh,im.getpalette(),fmt)
-        if not sig:
-            sig = cursig
-        else:
-            if sig != cursig:
-                print "sigs must match - got:"
-                print sig
-                print cursig
+    for seq in in_json["sequences"]:
+        bid = seq["group"]
+        for f in seq["frames"]:
+            im = Image.open(os.path.join(d,f))
+            fw,fh = im.size
+            if fmt == 2 and (fw != 32 or fh != 32):
+                print "format 2 must have width and height 32"
                 return False
-        if len(fn) > 9:
-            print "filename can't be longer than 9 bytes"
-            return False
-        data = fmtencoders[fmt](im)
-        infiles[bid].append((im,t,p,j,fn,lm,tm,fmt,data))
+            lm,tm,rm,bm = im.getbbox() or (0,0,0,0)
+            # format 3 has to have width and lm divisible by 32
+            if fmt == 3 and lm%32 != 0:
+                # shrink lm to the previous multiple of 32
+                lm = (lm/32)*32
+            w,h = rm-lm,bm-tm
+            if fmt == 3 and w%32 != 0:
+                # grow rm to the next multiple of 32
+                w = (((w-1)>>5)+1)<<5
+                rm = lm+w
+            im = im.crop((lm,tm,rm,bm))
+            if im.mode != 'P':
+                print "input images must have a palette"
+                return False
+            cursig =(fw,fh,im.getpalette())
+            if not sig:
+                sig = cursig
+            else:
+                if sig != cursig:
+                    print "sigs must match - got:"
+                    print sig
+                    print cursig
+                    return False
+            data,size = fmtencoders[fmt](im)
+            infiles[bid].append((w,h,lm,tm,data,size))
 
     if len(infiles) == 0:
         print "no input files detected"
         return False
 
-    # check if j values for all bids are correct and sort them in j order in the process
-    for bid in infiles:
-        infiles[bid].sort(key=lambda t: t[3])
-        for k,(_,_,_,j,_,_,_,_,_) in enumerate(infiles[bid]):
-            if k != j:
-                print "incorrect j value %d for bid %d should be %d"%(j,bid,k)
-
-    t,p,fw,fh,pal,fmt = cursig
+    fw,fh,pal = cursig
     outname = os.path.join(outdir,p)+".def"
     print "writing to %s"%outname
     outf = open(outname, "w+")
@@ -209,41 +217,27 @@ def makedef(indir, outdir):
         # the last two values have unknown meaning
         outf.write(struct.pack("<IIII",bid,len(l),0,0))
         # write filenames
-        for _,_,_,_,fn,_,_,_,_ in l:
-            outf.write(struct.pack("13s", fn+".pcx"))
+        for i,_ in enumerate(l):
+            fn = "%02d_%03d.pcx"%(bid,i)
+            outf.write(struct.pack("13s", fn))
         # write data offsets
-        for im,_,_,_,_,_,_,fmt,data in l:
+        for w,h,_,_,data,size in l:
             outf.write(struct.pack("<I",curoffset))
-            w,h = im.size
             # every image occupies size depending on its format plus 32 byte header
-            if fmt == 0:
-                curoffset += 32+len(data)
-            elif fmt == 1:
-                # 4*height bytes for lineoffsets
-                curoffset += 32+4*h+sum(len(d) for d in data)
-            elif fmt == 2:
-                # 2*height bytes for lineoffsets plus two unknown bytes
-                curoffset += 32+2*h+2+sum(len(d) for d in data)
-            elif fmt == 3:
-                # width/16 bytes per line as offset header
-                curoffset += 32+(w/16)*h+sum(sum([len(e) for e in d]) for d in data)
+            curoffset += 32+size
 
     for bid,l in infiles.items():
-        for im,_,p,j,_,lm,tm,fmt,data in l:
-            w,h = im.size
+        for w,h,lm,tm,data,size in l:
             # size
             # format
             # full width and full height
             # width and height
             # left and top margin
             if fmt == 0:
-                s = len(data)
-                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
-                buf = ''.join([chr(i) for i in list(im.getdata())])
-                outf.write(buf)
+                outf.write(struct.pack("<IIIIIIii",size,fmt,fw,fh,w,h,lm,tm))
+                outf.write(data)
             elif fmt == 1:
-                s = 4*h+sum(len(d) for d in data)
-                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
+                outf.write(struct.pack("<IIIIIIii",size,fmt,fw,fh,w,h,lm,tm))
                 lineoffs = []
                 acc = 4*h
                 for d in data:
@@ -253,8 +247,7 @@ def makedef(indir, outdir):
                 for i in data:
                     outf.write(i)
             elif fmt == 2:
-                s = 2*h+2+sum(len(d) for d in data)
-                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
+                outf.write(struct.pack("<IIIIIIii",size,fmt,fw,fh,w,h,lm,tm))
                 lineoffs = []
                 acc = 0
                 for d in data:
@@ -269,8 +262,7 @@ def makedef(indir, outdir):
                 for i in data:
                     outf.write(i)
             elif fmt == 3:
-                s = (w/16)*h+sum(sum([len(e) for e in d]) for d in data)
-                outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
+                outf.write(struct.pack("<IIIIIIii",size,fmt,fw,fh,w,h,lm,tm))
                 # store the offsets for all 32 pixel blocks
                 acc = 0
                 lineoffs = []
@@ -291,7 +283,7 @@ def makedef(indir, outdir):
 if __name__ == '__main__':
     import sys
     if len(sys.argv) != 3:
-        print "usage: %s indir outdir"%sys.argv[0]
+        print "usage: %s infile.json outdir"%sys.argv[0]
         exit(1)
     ret = makedef(sys.argv[1], sys.argv[2])
     exit(0 if ret else 1)
