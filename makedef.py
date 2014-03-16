@@ -209,8 +209,8 @@ def makedef(indir, outdir):
                 # 4*height bytes for lineoffsets
                 curoffset += 32+4*h+sum(len(d) for d in data)
             elif fmt == 2:
-                # two bytes for the header
-                curoffset += 32+2+sum(len(d) for d in data)
+                # 2*height bytes for lineoffsets plus two unknown bytes
+                curoffset += 32+2*h+2+sum(len(d) for d in data)
             elif fmt == 3:
                 # width/16 bytes per line as offset header
                 curoffset += 32+(w/16)*h+sum(len(d) for d in data)
@@ -240,13 +240,19 @@ def makedef(indir, outdir):
                 for i in data:
                     outf.write(i)
             elif fmt == 2:
-                s = 2+sum(len(d) for d in data)
+                s = 2*h+2+sum(len(d) for d in data)
                 outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
-                offs = outf.tell()-32+2
-                if offs > ushrtmax: 
-                    print "exceeding max ushort value: %d"%offs
-                    return False
-                outf.write(struct.pack("<H",offs))
+                lineoffs = []
+                acc = 0
+                for d in data:
+                    offs = acc+2*h+2
+                    if offs > ushrtmax: 
+                        print "exceeding max ushort value: %d"%offs
+                        return False
+                    lineoffs.append(offs)
+                    acc += len(d)
+                outf.write(struct.pack("<%dH"%h, *lineoffs))
+                outf.write(struct.pack("<BB", 0, 0)) # unknown function
                 for i in data:
                     outf.write(i)
             elif fmt == 3:

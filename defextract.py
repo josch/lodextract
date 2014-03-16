@@ -93,10 +93,13 @@ def extract_def(infile,outdir,shred=True):
                                 pixeldata += length*chr(code)
                             totalrowlength+=length
                 elif fmt == 2:
-                    coff, = struct.unpack("<H", f.read(2))
-                    coff += 32
-                    f.seek(coff)
-                    for i in range(h):
+                    lineoffs = struct.unpack("<%dH"%h, f.read(2*h))
+                    # unknown 
+                    _,_ = struct.unpack("<BB", f.read(2))
+                    for lineoff in lineoffs:
+                        if f.tell() != offs+32+lineoff:
+                            print "unexpected offset: %d, expected %d"%(f.tell(),offs+32+lineoff)
+                            f.seek(offs+32+lineoff)
                         totalrowlength=0
                         while totalrowlength<w:
                             segment, = struct.unpack("<B", f.read(1))
