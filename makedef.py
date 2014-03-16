@@ -7,8 +7,11 @@ from collections import defaultdict
 from PIL import Image
 ushrtmax = (1<<16)-1
 
+def encode0(im):
+    return ''.join([chr(i) for i in list(im.getdata())])
+
 # greedy RLE
-# for each pixel, test which encoding results in the smaller size, then apply
+# for each pixel, test which encoding manages to encode most data, then apply
 # that encoding and look at the next pixel after the encoded chunk
 def encode1(im):
     pixels = im.load()
@@ -56,61 +59,81 @@ def encode1(im):
         result.append(r)
     return result
 
+def encode23chunk(s,e,pixels,y):
+    r = ''
+    if pixels[s,y] < 8:
+        colors = pixels[s,y]
+        count = 1
+    else:
+        colors = [pixels[s,y]]
+        count = 0
+    for x in range(s+1,e):
+        color = pixels[x,y]
+        if count > 0:
+            # rle was started
+            if color == colors and count < 32:
+                # same color again, increase count
+                count+=1
+            else:
+                # either new color or maximum length reached, so write current one
+                r+=struct.pack("<B", (colors<<5) | (count-1))
+                if color < 7:
+                    # new rle color
+                    colors = color
+                    count = 1
+                else:
+                    # new non rle color
+                    colors = [color]
+                    count = 0
+        else:
+            # non rle was started
+            if color < 7 or len(colors) > 31:
+                # new rle color, or maximum length reached so write current non rle
+                r+=struct.pack("<B", (7<<5) | (len(colors)-1))
+                r+=struct.pack("<%dB"%len(colors), *colors)
+                if color < 7:
+                    colors = color
+                    count = 1
+                else:
+                    colors = [color]
+                    count = 0
+            else:
+                # new non rle color, so append it to current
+                colors.append(color)
+    # write last color
+    if count > 0:
+        # write rle
+        r+=struct.pack("<B", (colors<<5) | (count-1))
+    else:
+        # write non rle
+        r+=struct.pack("<B", (7<<5) | (len(colors)-1))
+        r+=struct.pack("<%dB"%len(colors), *colors)
+    return r
+
+# this is like encode3 but a line is not split into 32 pixel chuncks
+# the reason for this might just be that format 2 images are always 32 pixel wide
+def encode2(im):
+    pixels = im.load()
+    w,h = im.size
+    result = []
+    for y in range(h):
+        result.append(encode23chunk(0,w,pixels,y))
+    return result
+
+# this is like encode2 but limited to only encoding blocks of 32 pixels at a time
 def encode3(im):
     pixels = im.load()
     w,h = im.size
     result = []
     for y in range(h):
-        r = ''
-        if pixels[0,y] < 8:
-            colors = pixels[0,y]
-            count = 1
-        else:
-            colors = [pixels[0,y]]
-            count = 0
-        for x in range(1,w):
-            color = pixels[x,y]
-            if count > 0:
-                # rle was started
-                if color == colors and count < 32:
-                    # same color again, increase count
-                    count+=1
-                else:
-                    # either new color or maximum length reached, so write current one
-                    r+=struct.pack("<B", (colors<<5) | (count-1))
-                    if color < 7:
-                        # new rle color
-                        colors = color
-                        count = 1
-                    else:
-                        # new non rle color
-                        colors = [color]
-                        count = 0
-            else:
-                # non rle was started
-                if color < 7 or len(colors) > 31:
-                    # new rle color, or maximum length reached so write current non rle
-                    r+=struct.pack("<B", (7<<5) | (len(colors)-1))
-                    r+=struct.pack("<%dB"%len(colors), *colors)
-                    if color < 7:
-                        colors = color
-                        count = 1
-                    else:
-                        colors = [color]
-                        count = 0
-                else:
-                    # new non rle color, so append it to current
-                    colors.append(color)
-        # write last color
-        if count > 0:
-            # write rle
-            r+=struct.pack("<B", (colors<<5) | (count-1))
-        else:
-            # write non rle
-            r+=struct.pack("<B", (7<<5) | (len(colors)-1))
-            r+=struct.pack("<%dB"%len(colors), *colors)
-        result.append(r)
+        res = []
+        # encode each row in 32 pixel blocks
+        for i in range(w/32):
+            res.append(encode23chunk(i*32, (i+1)*32, pixels, y))
+        result.append(res)
     return result
+
+fmtencoders = [encode0,encode1,encode2,encode3]
 
 def makedef(indir, outdir):
     infiles = defaultdict(list)
@@ -150,17 +173,7 @@ def makedef(indir, outdir):
         if len(fn) > 9:
             print "filename can't be longer than 9 bytes"
             return False
-        if fmt == 0:
-            data = ''.join([chr(i) for i in list(im.getdata())])
-        elif fmt == 1:
-            data = encode1(im)
-        elif fmt == 2:
-            data = encode3(im)
-        elif fmt == 3:
-            data = encode3(im)
-        else:
-            print "unknown format: %d"%fmt
-            return False
+        data = fmtencoders[fmt](im)
         infiles[bid].append((im,t,p,j,fn,lm,tm,fmt,data))
 
     if len(infiles) == 0:
@@ -213,7 +226,7 @@ def makedef(indir, outdir):
                 curoffset += 32+2*h+2+sum(len(d) for d in data)
             elif fmt == 3:
                 # width/16 bytes per line as offset header
-                curoffset += 32+(w/16)*h+sum(len(d) for d in data)
+                curoffset += 32+(w/16)*h+sum(sum([len(e) for e in d]) for d in data)
 
     for bid,l in infiles.items():
         for im,_,p,j,_,lm,tm,fmt,data in l:
@@ -252,26 +265,27 @@ def makedef(indir, outdir):
                     lineoffs.append(offs)
                     acc += len(d)
                 outf.write(struct.pack("<%dH"%h, *lineoffs))
-                outf.write(struct.pack("<BB", 0, 0)) # unknown function
+                outf.write(struct.pack("<BB", 0, 0)) # unknown meaning
                 for i in data:
                     outf.write(i)
             elif fmt == 3:
-                s = (w/16)*h+sum(len(d) for d in data)
+                s = (w/16)*h+sum(sum([len(e) for e in d]) for d in data)
                 outf.write(struct.pack("<IIIIIIii",s,fmt,fw,fh,w,h,lm,tm))
-                # store the same value in all w/16 blocks per line
-                lineoffs = []
+                # store the offsets for all 32 pixel blocks
                 acc = 0
+                lineoffs = []
                 for d in data:
-                    offs = acc+(w/16)*h
-                    if offs > ushrtmax:
-                        print "exceeding max ushort value: %d"%offs
-                        return False
-                    lineoffs.append(offs)
-                    lineoffs.extend([0 for i in range(w/32-1)])
-                    acc += len(d)
+                    for e in d:
+                        offs = acc+(w/16)*h
+                        if offs > ushrtmax:
+                            print "exceeding max ushort value: %d"%offs
+                            return False
+                        lineoffs.append(offs)
+                        acc += len(e)
                 outf.write(struct.pack("<"+"H"*(w/32)*h, *lineoffs))
-                for i in data:
-                    outf.write(i)
+                for d in data: # line
+                    for e in d: # 32 pixel block
+                        outf.write(e)
     return True
 
 if __name__ == '__main__':

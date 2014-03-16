@@ -94,14 +94,14 @@ def extract_def(infile,outdir,shred=True):
                             totalrowlength+=length
                 elif fmt == 2:
                     lineoffs = struct.unpack("<%dH"%h, f.read(2*h))
-                    # unknown 
-                    _,_ = struct.unpack("<BB", f.read(2))
+                    _,_ = struct.unpack("<BB", f.read(2)) # unknown
                     for lineoff in lineoffs:
                         if f.tell() != offs+32+lineoff:
                             print "unexpected offset: %d, expected %d"%(f.tell(),offs+32+lineoff)
                             f.seek(offs+32+lineoff)
                         totalrowlength=0
                         while totalrowlength<w:
+                            print f.tell()-32-offs
                             segment, = struct.unpack("<B", f.read(1))
                             code = segment>>5
                             length = (segment&0x1f)+1
@@ -111,24 +111,25 @@ def extract_def(infile,outdir,shred=True):
                                 pixeldata += length*chr(code)
                             totalrowlength+=length
                 elif fmt == 3:
-                    # the first unsigned short in every w/16 byte block is the
-                    # offset we want - the others have an unknown function
-                    lineoffs = [struct.unpack("<"+"H"*(w/32), f.read(w/16))[0] for i in range(h)]
+                    # each row is split into 32 byte long blocks which are individually encoded
+                    # two bytes store the offset for each block per line 
+                    lineoffs = [struct.unpack("<"+"H"*(w/32), f.read(w/16)) for i in range(h)]
 
                     for lineoff in lineoffs:
-                        if f.tell() != offs+32+lineoff:
-                            print "unexpected offset: %d, expected %d"%(f.tell(),offs+32+lineoff)
-                            f.seek(offs+32+lineoff)
-                        totalrowlength=0
-                        while totalrowlength<w:
-                            segment, = struct.unpack("<B", f.read(1))
-                            code = segment>>5
-                            length = (segment&0x1f)+1
-                            if code == 7: # raw data
-                                pixeldata += f.read(length)
-                            else: # rle
-                                pixeldata += length*chr(code)
-                            totalrowlength+=length
+                        for i in lineoff:
+                            if f.tell() != offs+32+i:
+                                print "unexpected offset: %d, expected %d"%(f.tell(),offs+32+i)
+                                f.seek(offs+32+i)
+                            totalblocklength=0
+                            while totalblocklength<32:
+                                segment, = struct.unpack("<B", f.read(1))
+                                code = segment>>5
+                                length = (segment&0x1f)+1
+                                if code == 7: # raw data
+                                    pixeldata += f.read(length)
+                                else: # rle
+                                    pixeldata += length*chr(code)
+                                totalblocklength+=length
                 else:
                     print "unknown format: %d"%fmt
                     return False
