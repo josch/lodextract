@@ -33,7 +33,7 @@ def get_color(fname):
     # so we are left with 248 values 
     return 8+crc%248
 
-def extract_def(infile,outdir,shred=True):
+def extract_def(infile,outdir):
     f = open(infile)
     bn = os.path.basename(infile)
     bn = os.path.splitext(bn)[0].lower()
@@ -63,10 +63,17 @@ def extract_def(infile,outdir,shred=True):
             offs, = struct.unpack("<I", f.read(4))
             offsets[bid].append(offs)
 
-    os.mkdir(os.path.join(outdir,"%s.dir"%bn))
+    outpath = os.path.join(outdir,"%s.dir"%bn)
+    if os.path.exists(outpath):
+        if not os.path.isdir(outpath):
+            print "output path exists and is no directory"
+            return False
+    else:
+        os.mkdir(outpath)
 
     out_json = {"sequences":[],"type":t,"format":-1}
 
+    firstfw,firstfh = -1,-1
     for bid,l in offsets.items():
         frames=[]
         for j,offs in enumerate(l):
@@ -81,6 +88,30 @@ def extract_def(infile,outdir,shred=True):
             outname = os.path.join(outdir,"%s.dir"%bn,"%02d_%02d.png"%(bid,j))
             print "writing to %s"%outname
 
+            # SGTWMTA.def and SGTWMTB.def fail here
+            # they have inconsistent left and top margins
+            # they seem to be unused
+            if lm > fw or tm > fh:
+                print "margins (%dx%d) are higher than dimensions (%dx%d)"%(lm,tm,fw,fh)
+                return False
+
+            if firstfw==-1 and firstfh == -1:
+                firstfw = fw
+                firstfh = fh
+            else:
+                if firstfw > fw:
+                    print "must enlarge width"
+                    fw = firstfw
+                if firstfw < fw:
+                    print "first with smaller than latter one"
+                    return False
+                if firstfh > fh:
+                    print "must enlarge height"
+                    fh = firstfh
+                if firstfh < fh:
+                    print "first height smaller than latter one"
+                    return False
+
             if out_json["format"] == -1:
                 out_json["format"] = fmt
             elif out_json["format"] != fmt:
@@ -93,12 +124,6 @@ def extract_def(infile,outdir,shred=True):
                 if fmt == 0:
                     pixeldata = f.read(w*h)
                 elif fmt == 1:
-                    # SGTWMTA.def and SGTWMTB.def fail here
-                    # they have inconsistent left and top margins
-                    # they seem to be unused
-                    if lm > fw or tm > fh:
-                        print "margins (%dx%d) are higher than dimensions (%dx%d)"%(lm,tm,fw,fh)
-                        return False
                     lineoffs = struct.unpack("<"+"I"*h, f.read(4*h))
                     for lineoff in lineoffs:
                         f.seek(offs+32+lineoff)
@@ -120,7 +145,6 @@ def extract_def(infile,outdir,shred=True):
                             f.seek(offs+32+lineoff)
                         totalrowlength=0
                         while totalrowlength<w:
-                            print f.tell()-32-offs
                             segment, = struct.unpack("<B", f.read(1))
                             code = segment>>5
                             length = (segment&0x1f)+1
@@ -155,32 +179,10 @@ def extract_def(infile,outdir,shred=True):
                 im = Image.fromstring('P', (w,h),pixeldata)
             else: # either width or height is zero
                 im = None
-            if im and shred:
-                #im = Image.new("P", (w*3,h*3), get_color(bn))
-                #draw = ImageDraw.Draw(im)
-                #tw,th = draw.textsize("%d%s"%(j,bn),font=font)
-                #draw.text(((w*3-tw)/2,(h*3-th)/2),"%d%s"%(j,bn),font=font)
-                #im = im.resize((w,h),Image.ANTIALIAS)
-
-                #pixels = im.load()
-                #color = get_color(bn)
-                #for i in range(w):
-                #    for j in range(h):
-                #        if pixels[i,j] > 7:
-                #            pixels[i,j] = color
-
-                color = get_color(bn)
-                import numpy as np
-                pixels = np.array(im)
-                pixels[pixels > 7] = color
-                im = Image.fromarray(pixels)
             imo = Image.new('P', (fw,fh))
             imo.putpalette(palette)
             if im:
                 imo.paste(im,(lm,tm))
-            #draw = ImageDraw.Draw(imo)
-            #tw,th = draw.textsize(bn,font=font)
-            #draw.text(((fw-tw)/2,(fh-th)/2),bn,255,font=font)
             imo.save(outname)
         out_json["sequences"].append({"group":bid,"frames":frames})
         with open(os.path.join(outdir,"%s.json"%bn),"w+") as o:

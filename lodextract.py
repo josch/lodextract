@@ -43,7 +43,7 @@ def read_pcx(data):
     else:
         return None
 
-def unpack_lod(infile,outdir,shred=True):
+def unpack_lod(infile,outdir):
     f = open(infile)
 
     header = f.read(4)
@@ -72,38 +72,14 @@ def unpack_lod(infile,outdir,shred=True):
             data = f.read(size)
         if is_pcx(data):
             im = read_pcx(data)
-            if im:
-                if shred:
-                    crc = crc24_func(filename)
-                    r = crc>>16
-                    g = (crc&0xff00)>>8
-                    b = crc&0xff
-                    w,h = im.size
-                    pixels = im.load()
-                    for i in range(w):
-                        for j in range(h):
-                            if pixels[i,j] > 7:
-                                if im.mode == 'P':
-                                    pixels[i,j] = 8+crc%248
-                                else:
-                                    pixels[i,j] = (r,g,b)
-                    im.resize((w*3,h*3))
-                    draw = ImageDraw.Draw(im)
-                    tw,th = draw.textsize(os.path.basename(filename),font=font)
-                    tpos = ((w*3-tw)/2,(h*3-th)/2)
-                    if im.mode == 'P':
-                        # we can't really have a complement in palette mode, so just get some color
-                        draw.text(tpos,os.path.basename(filename),255,font=font)
-                    else:
-                        draw.text(tpos,os.path.basename(filename),get_complement(r,g,b),font=font)
-                    im = im.resize((w,h),Image.ANTIALIAS)
-                im.save(filename, "PNG")
-            else:
+            if not im:
                 return False
+            filename = os.path.splitext(filename)[0]
+            filename = filename+".png"
+            im.save(filename)
         else:
-            o = open(filename,"w+")
-            o.write(data)
-            o.close()
+            with open(filename,"w+") as o:
+                o.write(data)
 
     return True
 
