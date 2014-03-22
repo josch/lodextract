@@ -21,6 +21,8 @@ import struct
 import json
 from collections import defaultdict
 from PIL import Image
+import numpy as np
+
 ushrtmax = (1<<16)-1
 
 def encode0(im):
@@ -172,6 +174,9 @@ def makedef(infile, outdir):
     p = os.path.splitext(p)[0].lower()
     d = os.path.dirname(infile)
 
+    outname = os.path.join(outdir,p)+".def"
+    print "writing to %s"%outname
+
     # sanity checks and fill infiles dict
     for seq in in_json["sequences"]:
         bid = seq["group"]
@@ -192,10 +197,13 @@ def makedef(infile, outdir):
                 w = (((w-1)>>5)+1)<<5
                 rm = lm+w
             im = im.crop((lm,tm,rm,bm))
-            if im.mode != 'P':
-                print "input images must have a palette"
+            if im.mode == 'P':
+                cursig =(fw,fh,im.getpalette())
+            elif im.mode == 'RGBA':
+                cursig =(fw,fh,None)
+            else:
+                print "input images must be rgba or palette based"
                 return False
-            cursig =(fw,fh,im.getpalette())
             if not sig:
                 sig = cursig
             else:
@@ -204,16 +212,76 @@ def makedef(infile, outdir):
                     print sig
                     print cursig
                     return False
-            data,size = fmtencoders[fmt](im)
-            infiles[bid].append((w,h,lm,tm,data,size))
+            infiles[bid].append((lm,tm,im))
 
     if len(infiles) == 0:
         print "no input files detected"
         return False
 
     fw,fh,pal = cursig
-    outname = os.path.join(outdir,p)+".def"
-    print "writing to %s"%outname
+    numframes = sum(len(l) for l in infiles.values())
+
+    # input images were RGB, find a good common palette
+    if not pal:
+        # create a concatenation of all images to create a good common palette
+        concatim = Image.new("RGB",(fw,fh*numframes))
+        num = 0
+        for _,l in infiles.items():
+            for _,_,im in l:
+                concatim.paste(im, (0,fh*num))
+                num+=1
+        # convert that concatenation to a palette image to obtain a good common palette
+        concatim = concatim.convert("P", dither=None, colors=248, palette=Image.ADAPTIVE)
+        # concatenate the 248 colors to the 8 special ones
+        pal = [0x00, 0xff, 0xff, # full transparency
+               0xff, 0x96, 0xff, # shadow border
+               0xff, 0x64, 0xff, # ???
+               0xff, 0x32, 0xff, # ???
+               0xff, 0x00, 0xff, # shadow body
+               0xff, 0xff, 0x00, # selection highlight
+               0xb4, 0x00, 0xff, # shadow body below selection
+               0x00, 0xff, 0x00, # shadow border below selection
+               ] + concatim.getpalette()[:744]
+        # convert RGBA images to P images with the common palette
+        for bid,l in infiles.items():
+            newl = []
+            for lm,tm,im in l:
+                w,h = im.size
+                if w == 0 or h == 0:
+                    imp = None
+                else:
+                    # must convert to RGB first for quantize() to work
+                    imrgb = im.convert("RGB")
+                    imp = imrgb.quantize(palette=concatim)
+                    # now shift the colors by 8
+                    pix = np.array(imp)
+                    pix += 8
+                    imp = Image.fromarray(pix)
+                    # now replace full transparency in the original RGBA image with index 0
+                    pixrgba = np.array(im)
+                    alpha = pixrgba[:,:,3]
+                    pix[alpha == 0] = 0
+                    # now replace any half-transpareny with shadow body (index 4)
+                    pix[(alpha > 0) & (alpha < 0xff)] = 4
+                    # TODO: calculate shadow border
+                    # now put the palette with the special colors
+                    imp.putpalette(pal)
+                newl.append((lm,tm,imp))
+            infiles[bid] = newl
+
+    # encode all images according to the required format
+    for bid,l in infiles.items():
+        newl = []
+        for lm,tm,im in l:
+            if im:
+                w,h = im.size
+                data,size = fmtencoders[fmt](im)
+            else:
+                w,h = 0,0
+                data,size = '',0
+            newl.append((w,h,lm,tm,data,size))
+        infiles[bid] = newl
+
     outf = open(outname, "w+")
 
     # write the header

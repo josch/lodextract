@@ -21,8 +21,6 @@ import struct
 import os
 from PIL import Image, ImageDraw
 
-from common import crc24_func, get_complement, font
-
 def is_pcx(data):
     size,width,height = struct.unpack("<III",data[:12])
     return size == width*height or size == width*height*3

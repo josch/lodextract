@@ -19,7 +19,12 @@
 import struct
 from collections import defaultdict
 
-from common import sanitize_filename
+def sanitize_filename(fname):
+    # find the first character outside range [32-126]
+    for i,c in enumerate(fname):
+        if ord(c) < 32 or ord(c) > 126:
+            break
+    return fname[:i]
 
 def main(infile):
     f = open(infile)
@@ -28,8 +33,8 @@ def main(infile):
     palette = []
     for i in range(256):
         r,g,b = struct.unpack("<BBB", f.read(3))
-        palette.extend((r,g,b))
-    print palette
+        palette.append((r,g,b))
+    print "palette: %s"%(' '.join(["#%02x%02x%02x"%(r,g,b) for r,g,b in palette]))
     offsets = defaultdict(list)
     for i in range(blocks):
         bid,entries,x_,y_ = struct.unpack("<IIII", f.read(16))

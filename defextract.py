@@ -25,13 +25,7 @@ from PIL import Image, ImageDraw
 from collections import defaultdict
 import os
 import json
-from common import crc24_func, font, sanitize_filename
-
-def get_color(fname):
-    crc = crc24_func(fname)
-    # values 0-7 must not be used as they might represent transparency
-    # so we are left with 248 values 
-    return 8+crc%248
+import numpy as np
 
 def extract_def(infile,outdir):
     f = open(infile)
@@ -176,14 +170,33 @@ def extract_def(infile,outdir):
                 else:
                     print "unknown format: %d"%fmt
                     return False
-                im = Image.fromstring('P', (w,h),pixeldata)
+                imp = Image.fromstring('P', (w,h),pixeldata)
+                imp.putpalette(palette)
+                # convert to RGBA
+                imrgb = imp.convert("RGBA")
+                # replace special colors
+                # 0 -> (0,0,0,0)    = full transparency
+                # 1 -> (0,0,0,0x40) = shadow border
+                # 2 -> ???
+                # 3 -> ???
+                # 4 -> (0,0,0,0x80) = shadow body
+                # 5 -> (0,0,0,0)    = selection highlight, treat as full transparency
+                # 6 -> (0,0,0,0x80) = shadow body below selection, treat as shadow body
+                # 7 -> (0,0,0,0x40) = shadow border below selection, treat as shadow border
+                pixrgb = np.array(imrgb)
+                pixp = np.array(imp)
+                pixrgb[pixp == 0] = (0,0,0,0)
+                pixrgb[pixp == 1] = (0,0,0,0x40)
+                pixrgb[pixp == 4] = (0,0,0,0x80)
+                pixrgb[pixp == 5] = (0,0,0,0)
+                pixrgb[pixp == 6] = (0,0,0,0x80)
+                pixrgb[pixp == 7] = (0,0,0,0x40)
+                imrgb = Image.fromarray(pixrgb)
+                im = Image.new('RGBA', (fw,fh), (0,0,0,0))
+                im.paste(imrgb,(lm,tm))
             else: # either width or height is zero
-                im = None
-            imo = Image.new('P', (fw,fh))
-            imo.putpalette(palette)
-            if im:
-                imo.paste(im,(lm,tm))
-            imo.save(outname)
+                im = Image.new('RGBA', (fw,fh), (0,0,0,0))
+            im.save(outname)
         out_json["sequences"].append({"group":bid,"frames":frames})
         with open(os.path.join(outdir,"%s.json"%bn),"w+") as o:
             json.dump(out_json,o,indent=4)
