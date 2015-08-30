@@ -1,3 +1,17 @@
+PROJECT MOVED
+=============
+
+This project moved to:
+
+https://gitlab.mister-muffin.de/josch/lodextract
+
+Rationale: free software needs free tools. See: http://mako.cc/writing/hill-free_tools.html
+
+This copy will remain read-only and will not receive any further updates.
+
+lodextract
+==========
+
 This is a set of scripts which shows how to unpack all bitmaps and animations
 of Heroes of Might and Magic 3 into PNG images and then back into the formats
 understood by VCMI.
